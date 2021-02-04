@@ -8,23 +8,56 @@ from matplotlib.gridspec import GridSpec
 UP = 1
 DOWN = -1
 
+CRIT_TEMP = 2 / np.log(1 + np.sqrt(2))
+
+
+class RandomPointPool:
+    def __init__(self, low, hi):
+        assert low < hi, "Low must be less than hi"
+        self.low = low
+        self.hi = hi
+        self.irand = 0
+        self.nrand = 1024 * 100
+        self.shape = (self.nrand, 2)
+        self.vals = np.random.randint(self.low, self.hi, size=self.shape)
+
+    def __call__(self):
+        if self.irand >= self.nrand:
+            self.irand = 0
+            self.vals = np.random.randint(self.low, self.hi, size=self.shape)
+        pt = self.vals[self.irand]
+        self.irand += 1
+        return tuple(pt)
+
+
+class RandomPool:
+    def __init__(self):
+        self.irand = 0
+        self.nrand = 1024 * 10
+        self.vals = np.random.rand(self.nrand)
+
+    def __call__(self):
+        if self.irand >= self.nrand:
+            self.irand = 0
+            self.vals = np.random.rand(self.nrand)
+        v = self.vals[self.irand]
+        self.irand += 1
+        return v
+
 
 class IsingSim:
-    def __init__(self, L, energy):
+    def __init__(self, L, temp=CRIT_TEMP):
         self.L = L
         self.N = L * L
-        self.dem_energy_dist = np.zeros(self.N, dtype=int)
-        self.target_energy = energy
-        self.sys_energy = 0
-        self.dem_energy = 0
-        self.mcs = 0
-        self.sys_energy_acc = 0
-        self.dem_energy_acc = 0
-        self.magnetization = 0
-        self.m_acc = 0
+        self.temperature = temp
+        self.energy = 0
+        self.energy_acc = 0
+        self.e2_acc = 0
+        self.mag = 0
+        self.mag_acc = 0
         self.m2_acc = 0
         self.accepted_moves = 0
-        self.temperature = 0
+        self.mcs = 0
 
         self.lattice = np.full((L, L), UP, dtype=np.int8)
 
@@ -32,55 +65,57 @@ class IsingSim:
         ny = [0, 0, 1, -1]
         # Lookup table of neighbor direction vectors
         self.dirs = np.array(list(zip(nx, ny)))
-        self.irand = 0
-        self.nrand = 1024 * 10
-        self.rand_pts = np.random.randint(self.L, size=(self.nrand, 2))
-
+        self.rand_pt = RandomPointPool(0, self.L)
+        self.rand = RandomPool()
+        self.w = np.zeros(9)
         self.init()
 
     def reset_acc(self):
-        self.sys_energy_acc = 0
-        self.dem_energy_acc = 0
-        self.m_acc = 0
+        self.energy_acc = 0
+        self.e2_acc = 0
+        self.mag_acc = 0
         self.m2_acc = 0
         self.mcs = 0
+        self.accepted_moves = 0
 
     def init(self):
-        tries = 0
-        energy = -self.N
-        mag = self.N
-        max_tries = 10 * self.N
-        while energy < self.target_energy and tries < max_tries:
-            pt = self.get_random_pt()
-            de = self.get_delta(pt)
-            if de > 0:
-                energy += de
-                spin = -self.lattice[pt]
-                self.lattice[pt] = spin
-                mag += 2 * spin
-            tries += 1
-        self.sys_energy = energy
-        self.magnetization = mag
+        self.energy = -2 * self.N
+        self.mag = self.N
+        self.reset_acc()
+        self.w[8] = np.exp(-8 / self.temperature)
+        self.w[4] = np.exp(-4 / self.temperature)
+
+    def specific_heat(self):
+        n = self.mcs or 1
+        e2_avg = self.e2_acc / n
+        e_avg = self.energy_acc / n
+        hcap = (e2_avg - (e_avg * e_avg)) / (
+            self.temperature * self.temperature
+        )
+        return hcap / self.N
+
+    def susceptibility(self):
+        n = self.mcs or 1
+        m2_avg = self.m2_acc / n
+        m_avg = self.mag_acc / n
+        sus = (m2_avg - (m_avg * m_avg)) / (self.temperature * self.N)
+        return sus
 
     def step(self):
         for i in range(self.N):
-            pt = self.get_random_pt()
+            pt = self.rand_pt()
             de = self.get_delta(pt)
-            if de <= self.dem_energy:
+            if de <= 0 or self.w[de] > self.rand():
                 spin = -self.lattice[pt]
                 self.lattice[pt] = spin
                 self.accepted_moves += 1
-                self.sys_energy += de
-                self.dem_energy -= de
-                self.magnetization += 2 * spin
-            self.sys_energy_acc += self.sys_energy
-            self.dem_energy_acc += self.dem_energy
-            self.m_acc += self.magnetization
-            self.m2_acc += self.magnetization * self.magnetization
+                self.energy += de
+                self.mag += 2 * spin
+            self.energy_acc += self.energy
+            self.e2_acc += self.energy * self.energy
+            self.mag_acc += self.mag
+            self.m2_acc += self.mag * self.mag
         self.mcs += 1
-        self.temperature = 4.0 / np.log(
-            1 + (4 * self.mcs * self.N / self.dem_energy_acc)
-        )
 
     def get_delta(self, pt):
         # (-1, 0) and (0, -1) allow periodic wrapping from the left and top
@@ -92,14 +127,6 @@ class IsingSim:
         de = 2 * self.lattice[pt] * self.lattice[nn.T[0], nn.T[1]].sum()
         return de
 
-    def get_random_pt(self):
-        if self.irand >= self.nrand:
-            self.irand = 0
-            self.rand_pts = np.random.randint(self.L, size=(self.nrand, 2))
-        pt = self.rand_pts[self.irand]
-        self.irand += 1
-        return tuple(pt)
-
 
 class SimPlotter:
     def __init__(self, sim, fig):
@@ -107,23 +134,17 @@ class SimPlotter:
         self.fig = fig
         self.im = None
         self.steps = []
-        self.data = {
-            "sys_energy": [],
-            "dem_energy": [],
-            "mag": [],
-            "tmp": [],
-        }
+        self.data = {"energy": [], "mag": [], "sheat": []}
         self.min_max = {
-            "sys_energy": [self.sim.sys_energy, self.sim.sys_energy],
-            "dem_energy": [self.sim.dem_energy, self.sim.dem_energy],
-            "mag": [self.sim.magnetization, self.sim.magnetization],
-            "tmp": [self.sim.temperature, self.sim.temperature],
+            "energy": [self.sim.energy, self.sim.energy],
+            "mag": [self.sim.mag, self.sim.mag],
+            "sheat": [self.sim.specific_heat(), self.sim.specific_heat()],
         }
         gs = GridSpec(2, 2)
         self.im_ax = self.fig.add_subplot(gs[0, 0])
         self.mag_ax = self.fig.add_subplot(gs[1, 0])
-        self.sys_ax = self.fig.add_subplot(gs[0, 1])
-        self.tmp_ax = self.fig.add_subplot(gs[1, 1])
+        self.energy_ax = self.fig.add_subplot(gs[0, 1])
+        self.sheat_ax = self.fig.add_subplot(gs[1, 1])
         self.im = self.im_ax.imshow(
             np.full_like(self.sim.lattice, UP),
             interpolation="none",
@@ -135,18 +156,23 @@ class SimPlotter:
         (self.mag_line,) = self.mag_ax.plot(self.steps, self.data["mag"])
         self.mag_ax.set_title("Magnetization")
         self.mag_ax.set_xlabel("Steps")
-        (self.sys_line,) = self.sys_ax.plot(
-            self.steps, self.data["dem_energy"]
+        (self.energy_line,) = self.energy_ax.plot(
+            self.steps, self.data["energy"]
         )
-        self.sys_ax.set_title("System Energy")
-        self.sys_ax.set_xlabel("Steps")
-        (self.tmp_line,) = self.tmp_ax.plot(self.steps, self.data["tmp"])
-        self.tmp_ax.set_title("Temperature")
-        self.tmp_ax.set_xlabel("Steps")
-        self.axs = (self.mag_ax, self.sys_ax, self.tmp_ax)
+        self.energy_ax.set_title("System Energy")
+        self.energy_ax.set_xlabel("Steps")
+        (self.sheat_line,) = self.sheat_ax.plot(self.steps, self.data["sheat"])
+        self.sheat_ax.set_title("Specific Heat")
+        self.sheat_ax.set_xlabel("Steps")
+        self.axs = (self.mag_ax, self.energy_ax, self.sheat_ax)
         for ax in self.axs:
             ax.grid()
-        self.artists = [self.im, self.mag_line, self.sys_line, self.tmp_line]
+        self.artists = [
+            self.im,
+            self.mag_line,
+            self.energy_line,
+            self.sheat_line,
+        ]
         plt.tight_layout()
 
     def _update_data(self, k, v):
@@ -163,27 +189,25 @@ class SimPlotter:
     def update(self, step):
         self.steps.append(step)
         self.sim.step()
-        self._update_data("sys_energy", self.sim.sys_energy)
-        self._update_data("dem_energy", self.sim.dem_energy)
-        self._update_data("mag", self.sim.magnetization)
-        self._update_data("tmp", self.sim.temperature)
+        self._update_data("energy", self.sim.energy)
+        self._update_data("mag", self.sim.mag)
+        self._update_data("sheat", self.sim.specific_heat())
         if step == 1:
-            # Drop initial zero values
-            tmp = self.data["tmp"]
-            self.min_max["tmp"] = [min(tmp), max(tmp)]
+            for k in self.data:
+                self.min_max[k] = list(self.data[k])
 
         self.im.set_data(self.sim.lattice)
         self.mag_line.set_data(self.steps, self.data["mag"])
-        self.sys_line.set_data(self.steps, self.data["sys_energy"])
-        self.tmp_line.set_data(self.steps, self.data["tmp"])
+        self.energy_line.set_data(self.steps, self.data["energy"])
+        self.sheat_line.set_data(self.steps, self.data["sheat"])
+
         self.mag_ax.set_ylim(*self.min_max["mag"])
-        # Add buffer so that data isn't obscured by axes lines
-        mm = self.min_max["sys_energy"]
-        self.sys_ax.set_ylim(mm[0] - 1, mm[1] + 1)
-        self.tmp_ax.set_ylim(*self.min_max["tmp"])
+        self.energy_ax.set_ylim(*self.min_max["energy"])
+        self.sheat_ax.set_ylim(*self.min_max["sheat"])
+
         self.mag_ax.set_xlim(-1, step)
-        self.sys_ax.set_xlim(-1, step)
-        self.tmp_ax.set_xlim(-1, step)
+        self.energy_ax.set_xlim(-1, step)
+        self.sheat_ax.set_xlim(-1, step)
         return self.artists
 
 
@@ -245,6 +269,7 @@ def run_sim(sim, iters):
 
 
 if __name__ == "__main__":
-    sim = IsingSim(50, 100)
+    sim = IsingSim(20, CRIT_TEMP)
+    sim.step()
     ani = SimAnimation(sim, 100, SimPlotter)
     ani.run()
