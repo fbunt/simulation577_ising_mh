@@ -3,12 +3,15 @@ import numpy as np
 from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
 from matplotlib.gridspec import GridSpec
+from scipy.ndimage import correlate
 
 
 UP = 1
 DOWN = -1
 
 CRIT_TEMP = 2 / np.log(1 + np.sqrt(2))
+
+NN_KERN = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=np.int8)
 
 
 class RandomPointPool:
@@ -46,7 +49,7 @@ class RandomPool:
 
 
 class IsingSim:
-    def __init__(self, L, temp=CRIT_TEMP):
+    def __init__(self, L, temp, random=False):
         self.L = L
         self.N = L * L
         self.temp = temp
@@ -61,7 +64,12 @@ class IsingSim:
         self.p_accepted_acc = 0
         self.mcs = 0
 
-        self.lattice = np.full((L, L), UP, dtype=np.int8)
+        if not random:
+            self.lattice = np.full((L, L), UP, dtype=np.int8)
+        else:
+            self.lattice = np.full((L, L), UP, dtype=np.int8)
+            change = np.random.random((L, L)) < 0.5
+            self.lattice[change] = DOWN
 
         nx = [1, -1, 0, 0]
         ny = [0, 0, 1, -1]
@@ -83,8 +91,9 @@ class IsingSim:
         self.p_accepted_acc = 0
 
     def init(self):
-        self.energy = -2 * self.N
-        self.mag = self.N
+        nn = correlate(self.lattice, NN_KERN, mode="wrap")
+        self.energy = -(self.lattice * nn).sum() // 2
+        self.mag = self.lattice.sum()
         self.reset_acc()
         self.w[8] = np.exp(-8 / self.temp)
         self.w[4] = np.exp(-4 / self.temp)
