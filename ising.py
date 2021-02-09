@@ -146,8 +146,8 @@ M2_AVG = "<M^2>"
 HEAT_CAP = "Heat Capacity"
 SPEC_HEAT = "Specific Heat"
 SUS = "$\\chi / N$"
-P_ACC = "P_acc"
-P_ACC_AVG = "<P_acc>"
+P_ACC = "Acceptance Rate"
+P_ACC_AVG = "<Acceptance Rate>"
 
 
 class SimPlotter:
@@ -174,7 +174,10 @@ class SimPlotter:
         self.data = {k: [] for k in self.fetchers}
         self.min_max = {k: [f(), f()] for (k, f) in self.fetchers.items()}
         n = len(self.keys) + 1
-        if n <= 2:
+        if n == 1:
+            nr = 1
+            nc = 1
+        elif n <= 2:
             nr = 1
             nc = 2
         elif n <= 4:
@@ -312,7 +315,7 @@ if __name__ == "__main__":
     sim.step()
     ani = SimAnimation(
         sim,
-        100,
+        10,
         SimPlotter,
         [
             MAG_AVG,
