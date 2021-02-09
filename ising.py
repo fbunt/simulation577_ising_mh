@@ -117,10 +117,10 @@ class IsingSim:
                 accepted += 1
                 self.energy += de
                 self.mag += 2 * spin
-            self.energy_acc += self.energy
-            self.e2_acc += self.energy * self.energy
-            self.mag_acc += self.mag
-            self.m2_acc += self.mag * self.mag
+        self.energy_acc += self.energy
+        self.e2_acc += self.energy * self.energy
+        self.mag_acc += self.mag
+        self.m2_acc += self.mag * self.mag
         self.accepted_moves += accepted
         self.p_accepted = accepted / self.N
         self.p_accepted_acc += self.p_accepted
