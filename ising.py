@@ -49,7 +49,7 @@ class IsingSim:
     def __init__(self, L, temp=CRIT_TEMP):
         self.L = L
         self.N = L * L
-        self.temperature = temp
+        self.temp = temp
         self.energy = 0
         self.energy_acc = 0
         self.e2_acc = 0
@@ -57,6 +57,8 @@ class IsingSim:
         self.mag_acc = 0
         self.m2_acc = 0
         self.accepted_moves = 0
+        self.p_accepted = 0
+        self.p_accepted_acc = 0
         self.mcs = 0
 
         self.lattice = np.full((L, L), UP, dtype=np.int8)
@@ -77,44 +79,51 @@ class IsingSim:
         self.m2_acc = 0
         self.mcs = 0
         self.accepted_moves = 0
+        self.p_accepted = 0
+        self.p_accepted_acc = 0
 
     def init(self):
         self.energy = -2 * self.N
         self.mag = self.N
         self.reset_acc()
-        self.w[8] = np.exp(-8 / self.temperature)
-        self.w[4] = np.exp(-4 / self.temperature)
+        self.w[8] = np.exp(-8 / self.temp)
+        self.w[4] = np.exp(-4 / self.temp)
 
-    def specific_heat(self):
+    def heat_capacity(self):
         n = self.mcs or 1
         e2_avg = self.e2_acc / n
         e_avg = self.energy_acc / n
-        hcap = (e2_avg - (e_avg * e_avg)) / (
-            self.temperature * self.temperature
-        )
-        return hcap / self.N
+        hcap = (e2_avg - (e_avg * e_avg)) / (self.temp * self.temp)
+        return hcap
+
+    def specific_heat(self):
+        return self.heat_capacity() / self.N
 
     def susceptibility(self):
         n = self.mcs or 1
         m2_avg = self.m2_acc / n
         m_avg = self.mag_acc / n
-        sus = (m2_avg - (m_avg * m_avg)) / (self.temperature * self.N)
+        sus = (m2_avg - (m_avg * m_avg)) / (self.temp * self.N)
         return sus
 
     def step(self):
+        accepted = 0
         for i in range(self.N):
             pt = self.rand_pt()
             de = self.get_delta(pt)
             if de <= 0 or self.w[de] > self.rand():
                 spin = -self.lattice[pt]
                 self.lattice[pt] = spin
-                self.accepted_moves += 1
+                accepted += 1
                 self.energy += de
                 self.mag += 2 * spin
             self.energy_acc += self.energy
             self.e2_acc += self.energy * self.energy
             self.mag_acc += self.mag
             self.m2_acc += self.mag * self.mag
+        self.accepted_moves += accepted
+        self.p_accepted = accepted / self.N
+        self.p_accepted_acc += self.p_accepted
         self.mcs += 1
 
     def get_delta(self, pt):
