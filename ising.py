@@ -137,6 +137,19 @@ class IsingSim:
         return de
 
 
+ENERGY = "Energy"
+ENERGY_AVG = "<E> / N"
+E2_AVG = "<E^2> / N"
+MAG = "Magnetization"
+MAG_AVG = "<M>"
+M2_AVG = "<M^2>"
+HEAT_CAP = "Heat Capacity"
+SPEC_HEAT = "Specific Heat"
+SUS = "$\\chi / N$"
+P_ACC = "P_acc"
+P_ACC_AVG = "<P_acc>"
+
+
 class SimPlotter:
     def __init__(self, sim, fig, keys):
         self.sim = sim
@@ -145,23 +158,34 @@ class SimPlotter:
         self.im = None
         self.steps = []
         self.fetchers = {
-            "Energy": lambda: self.sim.energy,
-            "<E> / N": lambda: self.sim.energy_acc
+            ENERGY: lambda: self.sim.energy,
+            ENERGY_AVG: lambda: self.sim.energy_acc
             / (self.sim.N * self.sim.mcs),
-            "<E^2> / N": lambda: self.sim.e2_acc / (self.sim.N * self.sim.mcs),
-            "Magnetization": lambda: self.sim.mag,
-            "<M>": lambda: self.sim.mag_acc / self.sim.mcs,
-            "<M^2>": lambda: self.sim.m2_acc / self.sim.mcs,
-            "Heat Capacity": lambda: self.sim.heat_capacity(),
-            "Specific Heat": lambda: self.sim.specific_heat(),
-            "Susceptibility": lambda: self.sim.susceptibility(),
-            "P_acc": lambda: self.sim.p_accepted,
-            "<P_acc>": lambda: self.sim.p_accepted_acc / self.sim.mcs,
+            E2_AVG: lambda: self.sim.e2_acc / (self.sim.N * self.sim.mcs),
+            MAG: lambda: self.sim.mag,
+            MAG_AVG: lambda: self.sim.mag_acc / self.sim.mcs,
+            M2_AVG: lambda: self.sim.m2_acc / self.sim.mcs,
+            HEAT_CAP: lambda: self.sim.heat_capacity(),
+            SPEC_HEAT: lambda: self.sim.specific_heat(),
+            SUS: lambda: self.sim.susceptibility(),
+            P_ACC: lambda: self.sim.p_accepted,
+            P_ACC_AVG: lambda: self.sim.p_accepted_acc / self.sim.mcs,
         }
         self.data = {k: [] for k in self.fetchers}
         self.min_max = {k: [f(), f()] for (k, f) in self.fetchers.items()}
-        nr = 3
-        nc = 3
+        n = len(self.keys) + 1
+        if n <= 2:
+            nr = 1
+            nc = 2
+        elif n <= 4:
+            nr = 2
+            nc = 2
+        elif n <= 6:
+            nr = 3
+            nc = 2
+        elif n <= 9:
+            nr = 3
+            nc = 3
         gs = GridSpec(nr, nc)
         self.im_ax = self.fig.add_subplot(gs[0, 0])
         self.axes = {}
@@ -291,12 +315,11 @@ if __name__ == "__main__":
         100,
         SimPlotter,
         [
-            "<M>",
-            "<E> / N",
-            "Specific Heat",
-            "Susceptibility",
-            "P_acc",
-            "<P_acc>",
+            MAG_AVG,
+            ENERGY_AVG,
+            SPEC_HEAT,
+            SUS,
+            P_ACC_AVG,
         ],
     )
     ani.run()
