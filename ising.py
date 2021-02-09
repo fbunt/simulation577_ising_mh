@@ -138,22 +138,44 @@ class IsingSim:
 
 
 class SimPlotter:
-    def __init__(self, sim, fig):
+    def __init__(self, sim, fig, keys):
         self.sim = sim
         self.fig = fig
+        self.keys = keys
         self.im = None
         self.steps = []
-        self.data = {"energy": [], "mag": [], "sheat": []}
-        self.min_max = {
-            "energy": [self.sim.energy, self.sim.energy],
-            "mag": [self.sim.mag, self.sim.mag],
-            "sheat": [self.sim.specific_heat(), self.sim.specific_heat()],
+        self.fetchers = {
+            "Energy": lambda: self.sim.energy,
+            "<E> / N": lambda: self.sim.energy_acc
+            / (self.sim.N * self.sim.mcs),
+            "<E^2> / N": lambda: self.sim.e2_acc / (self.sim.N * self.sim.mcs),
+            "Magnetization": lambda: self.sim.mag,
+            "<M>": lambda: self.sim.mag_acc / self.sim.mcs,
+            "<M^2>": lambda: self.sim.m2_acc / self.sim.mcs,
+            "Heat Capacity": lambda: self.sim.heat_capacity(),
+            "Specific Heat": lambda: self.sim.specific_heat(),
+            "Susceptibility": lambda: self.sim.susceptibility(),
+            "P_acc": lambda: self.sim.p_accepted,
+            "<P_acc>": lambda: self.sim.p_accepted_acc / self.sim.mcs,
         }
-        gs = GridSpec(2, 2)
+        self.data = {k: [] for k in self.fetchers}
+        self.min_max = {k: [f(), f()] for (k, f) in self.fetchers.items()}
+        nr = 3
+        nc = 3
+        gs = GridSpec(nr, nc)
         self.im_ax = self.fig.add_subplot(gs[0, 0])
-        self.mag_ax = self.fig.add_subplot(gs[1, 0])
-        self.energy_ax = self.fig.add_subplot(gs[0, 1])
-        self.sheat_ax = self.fig.add_subplot(gs[1, 1])
+        self.axes = {}
+        k = -1
+        for i in range(nr):
+            for j in range(nc):
+                if k < 0:
+                    k += 1
+                    continue
+                if k >= len(self.keys):
+                    break
+                key = self.keys[k]
+                self.axes[key] = self.fig.add_subplot(gs[i, j])
+                k += 1
         self.im = self.im_ax.imshow(
             np.full_like(self.sim.lattice, UP),
             interpolation="none",
@@ -162,26 +184,16 @@ class SimPlotter:
             vmin=DOWN,
             vmax=UP,
         )
-        (self.mag_line,) = self.mag_ax.plot(self.steps, self.data["mag"])
-        self.mag_ax.set_title("Magnetization")
-        self.mag_ax.set_xlabel("Steps")
-        (self.energy_line,) = self.energy_ax.plot(
-            self.steps, self.data["energy"]
-        )
-        self.energy_ax.set_title("System Energy")
-        self.energy_ax.set_xlabel("Steps")
-        (self.sheat_line,) = self.sheat_ax.plot(self.steps, self.data["sheat"])
-        self.sheat_ax.set_title("Specific Heat")
-        self.sheat_ax.set_xlabel("Steps")
-        self.axs = (self.mag_ax, self.energy_ax, self.sheat_ax)
-        for ax in self.axs:
+        self.lines = {}
+        for key in self.keys:
+            (line,) = self.axes[key].plot(self.steps, self.data[key])
+            self.axes[key].set_ylabel(key)
+            self.axes[key].set_xlabel("Steps")
+            self.lines[key] = line
+        for ax in self.axes.values():
             ax.grid()
-        self.artists = [
-            self.im,
-            self.mag_line,
-            self.energy_line,
-            self.sheat_line,
-        ]
+        self.artists = [self.im]
+        self.artists.extend(self.lines.values())
         plt.tight_layout()
 
     def _update_data(self, k, v):
@@ -198,25 +210,18 @@ class SimPlotter:
     def update(self, step):
         self.steps.append(step)
         self.sim.step()
-        self._update_data("energy", self.sim.energy)
-        self._update_data("mag", self.sim.mag)
-        self._update_data("sheat", self.sim.specific_heat())
+        for k in self.keys:
+            self._update_data(k, self.fetchers[k]())
         if step == 1:
-            for k in self.data:
+            # Reset min/max to actual data
+            for k in self.keys:
                 self.min_max[k] = list(self.data[k])
 
         self.im.set_data(self.sim.lattice)
-        self.mag_line.set_data(self.steps, self.data["mag"])
-        self.energy_line.set_data(self.steps, self.data["energy"])
-        self.sheat_line.set_data(self.steps, self.data["sheat"])
-
-        self.mag_ax.set_ylim(*self.min_max["mag"])
-        self.energy_ax.set_ylim(*self.min_max["energy"])
-        self.sheat_ax.set_ylim(*self.min_max["sheat"])
-
-        self.mag_ax.set_xlim(-1, step)
-        self.energy_ax.set_xlim(-1, step)
-        self.sheat_ax.set_xlim(-1, step)
+        for k, line in self.lines.items():
+            line.set_data(self.steps, self.data[k])
+            self.axes[k].set_ylim(*self.min_max[k])
+            self.axes[k].set_xlim(-1, step)
         return self.artists
 
 
@@ -226,6 +231,7 @@ class SimAnimation:
         sim,
         interval,
         artist_class,
+        keys,
         max_iter=None,
         figsize=None,
         notebook=False,
@@ -238,7 +244,7 @@ class SimAnimation:
         self.fig = plt.figure(figsize=figsize)
         self.interval = interval
         self.paused = False
-        self.artist = artist_class(sim, self.fig)
+        self.artist = artist_class(sim, self.fig, keys)
 
     def init(self):
         return self.artist.init()
@@ -278,7 +284,19 @@ def run_sim(sim, iters):
 
 
 if __name__ == "__main__":
-    sim = IsingSim(20, CRIT_TEMP)
+    sim = IsingSim(32, 2)
     sim.step()
-    ani = SimAnimation(sim, 100, SimPlotter)
+    ani = SimAnimation(
+        sim,
+        100,
+        SimPlotter,
+        [
+            "<M>",
+            "<E> / N",
+            "Specific Heat",
+            "Susceptibility",
+            "P_acc",
+            "<P_acc>",
+        ],
+    )
     ani.run()
